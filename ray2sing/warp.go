@@ -20,10 +20,16 @@ func WarpSingbox(url string) (*T.Endpoint, error) {
 		return 0
 	}
 	// fmt.Println(u.Username, "-", u.Password, "-", u.Params)
+	// WireGuardWARPEndpointOptions (renamed from WARPEndpointOptions) no
+	// longer has an AWG obfuscation sub-field in this pinned sing-box
+	// version - jc/jmin/jmax/etc are dropped here rather than silently
+	// applied nowhere; core WARP fields (server, identifier, noise, mtu)
+	// are unaffected.
+	_ = getInt
 	out := T.Endpoint{
 		Type: C.TypeWARP,
 		Tag:  u.Name,
-		Options: &T.WARPEndpointOptions{
+		Options: &T.WireGuardWARPEndpointOptions{
 			ServerOptions: T.ServerOptions{
 				Server:     u.Hostname,
 				ServerPort: u.Port,
@@ -31,27 +37,6 @@ func WarpSingbox(url string) (*T.Endpoint, error) {
 			UniqueIdentifier: u.Username,
 			Noise:            getWireGuardNoise(u.Params, false),
 			MTU:              uint32(toInt(getOneOfN(u.Params, "1280", "mtu"))),
-
-			AWG: &T.AwgOptions{
-				Jc:   getInt("jc"),
-				Jmin: getInt("jmin"),
-				Jmax: getInt("jmax"),
-
-				S1: getInt("s1"),
-				S2: getInt("s2"),
-				S3: getInt("s3"),
-				S4: getInt("s4"),
-				H1: getOneOfN(u.Params, "", "h1"),
-				H2: getOneOfN(u.Params, "", "h2"),
-				H3: getOneOfN(u.Params, "", "h3"),
-				H4: getOneOfN(u.Params, "", "h4"),
-
-				I1: getOneOfN(u.Params, "", "i1"),
-				I2: getOneOfN(u.Params, "", "i2"),
-				I3: getOneOfN(u.Params, "", "i3"),
-				I4: getOneOfN(u.Params, "", "i4"),
-				I5: getOneOfN(u.Params, "", "i5"),
-			},
 		},
 	}
 

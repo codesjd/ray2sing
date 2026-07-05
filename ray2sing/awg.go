@@ -174,29 +174,30 @@ func AWGSingboxTxt(content string) (*T.Endpoint, error) {
 		Type: C.TypeAwg,
 		Tag:  "awg", // adjust if you derive tag elsewhere
 		Options: &T.AwgEndpointOptions{
-
+			// AwgEndpointOptions is a flat struct now (no nested Awg
+			// sub-field) - the obfuscation params live directly on it.
 			PrivateKey: privateKey,
 			Address:    badoption.Listable[netip.Prefix](addresses),
-			Awg: T.AwgOptions{
-				Jc:   jc,
-				Jmin: jmin,
-				Jmax: jmax,
 
-				S1: s1,
-				S2: s2,
-				S3: s3,
-				S4: s4,
-				H1: h1,
-				H2: h2,
-				H3: h3,
-				H4: h4,
+			Jc:   jc,
+			Jmin: jmin,
+			Jmax: jmax,
 
-				I1: i1,
-				I2: i2,
-				I3: i3,
-				I4: i4,
-				I5: i5,
-			},
+			S1: s1,
+			S2: s2,
+			S3: s3,
+			S4: s4,
+			H1: h1,
+			H2: h2,
+			H3: h3,
+			H4: h4,
+
+			I1: i1,
+			I2: i2,
+			I3: i3,
+			I4: i4,
+			I5: i5,
+
 			Peers: []T.AwgPeerOptions{peer},
 		},
 	}
@@ -287,30 +288,29 @@ func AWGSingbox(raw string) (*T.Endpoint, error) {
 		return nil, errors.New("missing peer_public_key")
 	}
 	opts := T.AwgEndpointOptions{
-
+		// AwgEndpointOptions is a flat struct now (no nested Awg sub-field).
 		PrivateKey: pk,
 		Address:    addresses,
 
-		Awg: T.AwgOptions{
-			Jc:   getInt("jc"),
-			Jmin: getInt("jmin"),
-			Jmax: getInt("jmax"),
+		Jc:   getInt("jc"),
+		Jmin: getInt("jmin"),
+		Jmax: getInt("jmax"),
 
-			S1: getInt("s1"),
-			S2: getInt("s2"),
-			S3: getInt("s3"),
-			S4: getInt("s4"),
-			H1: getOneOfN(u.Params, "", "h1"),
-			H2: getOneOfN(u.Params, "", "h2"),
-			H3: getOneOfN(u.Params, "", "h3"),
-			H4: getOneOfN(u.Params, "", "h4"),
+		S1: getInt("s1"),
+		S2: getInt("s2"),
+		S3: getInt("s3"),
+		S4: getInt("s4"),
+		H1: getOneOfN(u.Params, "", "h1"),
+		H2: getOneOfN(u.Params, "", "h2"),
+		H3: getOneOfN(u.Params, "", "h3"),
+		H4: getOneOfN(u.Params, "", "h4"),
 
-			I1: getOneOfN(u.Params, "", "i1"),
-			I2: getOneOfN(u.Params, "", "i2"),
-			I3: getOneOfN(u.Params, "", "i3"),
-			I4: getOneOfN(u.Params, "", "i4"),
-			I5: getOneOfN(u.Params, "", "i5"),
-		},
+		I1: getOneOfN(u.Params, "", "i1"),
+		I2: getOneOfN(u.Params, "", "i2"),
+		I3: getOneOfN(u.Params, "", "i3"),
+		I4: getOneOfN(u.Params, "", "i4"),
+		I5: getOneOfN(u.Params, "", "i5"),
+
 		Peers: []T.AwgPeerOptions{peer},
 	}
 	if mtuStr, ok := u.Params["mtu"]; ok {
@@ -319,7 +319,12 @@ func AWGSingbox(raw string) (*T.Endpoint, error) {
 		}
 	}
 	var out *T.Endpoint
-	isAwg := opts.Awg.IsAvailble()
+	// No more AwgOptions.IsAvailble() method to call now that the fields
+	// are flattened directly onto AwgEndpointOptions - same "any
+	// obfuscation param set" check AWGSingboxTxt already does above.
+	isAwg := opts.Jc+opts.Jmin+opts.Jmax+opts.S1+opts.S2+opts.S3+opts.S4 != 0 ||
+		opts.H1 != "" || opts.H2 != "" || opts.H3 != "" || opts.H4 != "" ||
+		opts.I1 != "" || opts.I2 != "" || opts.I3 != "" || opts.I4 != "" || opts.I5 != ""
 
 	if true || isAwg {
 		wgopts := T.WireGuardEndpointOptions{
