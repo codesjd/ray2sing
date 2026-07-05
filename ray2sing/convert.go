@@ -19,6 +19,7 @@ var configTypes = map[string]ParserFunc{
 	"vmess://":     VmessSingbox,
 	"vless://":     VlessSingbox,
 	"trojan://":    TrojanSingbox,
+	"anytls://":    AnyTLSSingbox,
 	"svmess://":    VmessSingbox,
 	"svless://":    VlessSingbox,
 	"strojan://":   TrojanSingbox,

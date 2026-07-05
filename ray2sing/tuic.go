@@ -30,11 +30,16 @@ func TuicSingbox(tuicUrl string) (*T.Outbound, error) {
 		Type: "tuic",
 		Tag:  u.Name,
 		Options: &T.TUICOutboundOptions{
-			ServerOptions:     u.GetServerOption(),
-			UUID:              u.Username,
-			Password:          u.Password,
-			CongestionControl: decoded["congestioncontrol"],
-			UDPRelayMode:      decoded["udprelaymode"],
+			ServerOptions: u.GetServerOption(),
+			UUID:          u.Username,
+			Password:      u.Password,
+			// normalizeStr() (called on every stored key) turns "_"/"-" into
+			// a space, not nothing - "congestioncontrol"/"udprelaymode"
+			// (no separator) never matched the actual stored key. getOneOfN
+			// normalizes the lookup key too, same as every other multi-word
+			// param in this package (see naive.go's quic_congestion_control).
+			CongestionControl: getOneOfN(decoded, "", "congestion_control"),
+			UDPRelayMode:      getOneOfN(decoded, "", "udp_relay_mode"),
 			ZeroRTTHandshake:  false,
 			Heartbeat:         badoption.Duration(10 * time.Second),
 			OutboundTLSOptionsContainer: T.OutboundTLSOptionsContainer{
