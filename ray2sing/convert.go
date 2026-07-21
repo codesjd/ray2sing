@@ -3,6 +3,7 @@ package ray2sing
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"runtime"
 
@@ -76,6 +77,25 @@ type OutEnd struct {
 	endpoint *T.Endpoint
 }
 
+// requiresXrayCore reports whether a link uses a feature that only exists via the embedded
+// Xray-core engine - KCP transport and the "fm" (finalmask, e.g. xdns/xicmp) param, neither of
+// which sing-box's native protocol implementations support at all - regardless of the
+// "use xray-core when possible" setting. Without this, such a link would only ever be attempted
+// through the native sing-box parser (which doesn't understand "type=kcp" or "fm=" either way)
+// unless the user happened to have that setting on or the link carried an explicit "&core=xray".
+func requiresXrayCore(config string) bool {
+	u, err := url.Parse(config)
+	if err != nil {
+		return false
+	}
+	q := u.Query()
+	net := q.Get("net")
+	if net == "" {
+		net = q.Get("type")
+	}
+	return net == "kcp" || net == "mkcp" || q.Get("fm") != ""
+}
+
 func processSingleConfig(config string, useXrayWhenPossible bool) (outend *OutEnd, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -88,7 +108,7 @@ func processSingleConfig(config string, useXrayWhenPossible bool) (outend *OutEn
 	}()
 	// configDecoded := decodeUrlBase64IfNeeded(config)
 	outend = &OutEnd{}
-	if useXrayWhenPossible || strings.Contains(config, "&core=xray") {
+	if useXrayWhenPossible || strings.Contains(config, "&core=xray") || requiresXrayCore(config) {
 		for k, v := range xrayConfigTypes {
 			if strings.HasPrefix(config, k) {
 				outend.outbound, err = v(config)

@@ -454,8 +454,13 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 	if net == "tcp" {
 		net = "raw"
 	}
+	if net == "kcp" {
+		net = "mkcp"
+	}
 	res["network"] = net
 	switch net {
+	case "mkcp":
+		res["kcpSettings"] = getkcp(decoded)
 	case "raw":
 		res[net+"Settings"] = map[string]any{}
 		decoded["alpn"] = "http/1.1"
@@ -492,7 +497,40 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 		res["security"] = "reality"
 		res["realitySettings"] = reality
 	}
+	if finalmask := getFinalmask(decoded); finalmask != nil {
+		res["finalmask"] = finalmask
+	}
 	return res, nil
+}
+
+// getkcp builds Xray-core's "kcpSettings" from the URI's "headerType"/"seed" params (transport
+// type is "kcp" in the link, but "mkcp" in Xray-core's own JSON schema - see the network
+// normalization above). "none" is the header-type default, so it's only set when overridden.
+func getkcp(decoded map[string]string) map[string]any {
+	kcp := map[string]any{}
+	if headerType := decoded["headertype"]; headerType != "" && headerType != "none" {
+		kcp["header"] = map[string]any{"type": headerType}
+	}
+	if seed := decoded["seed"]; seed != "" {
+		kcp["seed"] = seed
+	}
+	return kcp
+}
+
+// getFinalmask parses the "fm" URI param - a URL-encoded JSON object - into Xray-core's
+// "finalmask" stream-settings field, which wraps additional per-direction transforms (e.g. the
+// "xdns"/"xicmp" udp masks) around the underlying transport. It's opaque to this converter: the
+// value is handed to Xray-core as-is rather than validated field-by-field.
+func getFinalmask(decoded map[string]string) map[string]any {
+	fm := decoded["fm"]
+	if fm == "" {
+		return nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(fm), &parsed); err != nil {
+		return nil
+	}
+	return parsed
 }
 
 // func getXrayFragmentOptions(decoded map[string]string) *conf.Fragment {
