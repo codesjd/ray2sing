@@ -26,6 +26,7 @@ func TuicSingbox(tuicUrl string) (*T.Outbound, error) {
 	// if err != nil {
 	// 	return nil, err
 	// }
+	insecureFallback, pinnedCertSha256 := resolvePinnedCertOrInsecure(decoded)
 	result := T.Outbound{
 		Type: "tuic",
 		Tag:  u.Name,
@@ -39,12 +40,13 @@ func TuicSingbox(tuicUrl string) (*T.Outbound, error) {
 			Heartbeat:         badoption.Duration(10 * time.Second),
 			OutboundTLSOptionsContainer: T.OutboundTLSOptionsContainer{
 				TLS: &T.OutboundTLSOptions{
-					Enabled:    true,
-					DisableSNI: decoded["sni"] == "",
-					ServerName: decoded["sni"],
-					Insecure:   decoded["allowinsecure"] == "1" || decoded["insecure"] == "1",
-					ALPN:       []string{"h3", "spdy/3.1"},
-					ECH:        ECHOpts,
+					Enabled:                     true,
+					DisableSNI:                  decoded["sni"] == "",
+					ServerName:                  decoded["sni"],
+					Insecure:                    insecureFallback,
+					PinnedPeerCertificateSha256: pinnedCertSha256,
+					ALPN:                        []string{"h3", "spdy/3.1"},
+					ECH:                         ECHOpts,
 				},
 			},
 			// TurnRelay: turnRelay,

@@ -52,16 +52,14 @@ func getTLSOptions(decoded map[string]string) T.OutboundTLSOptionsContainer {
 	if fp == "" && decoded["security"] == "reality" {
 		fp = "chrome"
 	}
-	insecure, err := getOneOf(decoded, "insecure", "allowinsecure")
-	if err != nil {
-		insecure = "false"
-	}
+	insecureFallback, pinnedCertSha256 := resolvePinnedCertOrInsecure(decoded)
 	tlsOptions := &option.OutboundTLSOptions{
-		Enabled:    true,
-		ServerName: serverName,
-		Insecure:   insecure == "true" || insecure == "1",
-		DisableSNI: getOneOfN(decoded, "", "nosni") != "",
-		ECH:        ECHOpts,
+		Enabled:                     true,
+		ServerName:                  serverName,
+		Insecure:                    insecureFallback,
+		PinnedPeerCertificateSha256: pinnedCertSha256,
+		DisableSNI:                  getOneOfN(decoded, "", "nosni") != "",
+		ECH:                         ECHOpts,
 		// TLSTricks:  getTricksOptions(decoded),
 	}
 	if fp != "" && !tlsOptions.DisableSNI {
@@ -525,4 +523,43 @@ func getOneOfN(dic map[string]string, defaultval string, headers ...string) stri
 		}
 	}
 	return defaultval
+}
+
+// cleanKey collapses casing and separator differences ("allowInsecure", "allow_insecure",
+// "allow-insecure", "allow insecure" all become "allowinsecure") so the same lookup works whether
+// the source map came through ParseUrl's normalizeStr (query links) or a raw JSON payload (vmess),
+// which preserve keys verbatim.
+func cleanKey(s string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(s))
+}
+
+// getAny looks up decoded for any of the given keys, ignoring case/separator differences (see cleanKey).
+func getAny(decoded map[string]string, keys ...string) (string, bool) {
+	wanted := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		wanted[cleanKey(k)] = true
+	}
+	for k, v := range decoded {
+		if wanted[cleanKey(k)] {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// resolvePinnedCertOrInsecure implements the manager's TLS-validation fallback: prefer the pinned
+// full-certificate SHA-256 ("pcs"/"pinned_cert_sha256", a lowercase hex digest of the leaf cert's
+// DER bytes - see hutils/network/net.py) over the legacy blanket allowInsecure/insecure flag, which
+// the manager only still emits when no pin is cached yet. The two are mutually exclusive server-side.
+func resolvePinnedCertOrInsecure(decoded map[string]string) (insecure bool, pinnedCertSha256 []string) {
+	if pcs, ok := getAny(decoded, "pcs", "pinned_cert_sha256"); ok {
+		if pcs = strings.ToLower(strings.TrimSpace(pcs)); pcs != "" {
+			return false, []string{pcs}
+		}
+	}
+	if v, ok := getAny(decoded, "insecure", "allow_insecure"); ok {
+		v = strings.ToLower(strings.TrimSpace(v))
+		return v == "1" || v == "true", nil
+	}
+	return false, nil
 }
