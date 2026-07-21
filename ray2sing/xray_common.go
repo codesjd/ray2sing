@@ -287,7 +287,10 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 		"fingerprint": fp,
 	}
 	if len(pinnedCertSha256) > 0 {
-		tlsSettings["pinnedPeerCertSha256"] = pinnedCertSha256[0]
+		// xray-core's pinnedPeerCertSha256 accepts multiple hashes "~"-joined (see
+		// infra/conf/transport_internet.go); join rather than taking just the first so a
+		// future multi-pin pcs= (the manager only ever emits one today) round-trips correctly.
+		tlsSettings["pinnedPeerCertSha256"] = strings.Join(pinnedCertSha256, "~")
 	}
 	return tlsSettings
 }

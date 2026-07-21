@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 
 	"strings"
@@ -547,14 +548,50 @@ func getAny(decoded map[string]string, keys ...string) (string, bool) {
 	return "", false
 }
 
+// isHexSha256 reports whether s is a well-formed lowercase-or-not hex SHA-256 digest (64 hex
+// chars), matching hutils/network/net.py's hashlib.sha256(der_cert).hexdigest() output.
+func isHexSha256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 // resolvePinnedCertOrInsecure implements the manager's TLS-validation fallback: prefer the pinned
 // full-certificate SHA-256 ("pcs"/"pinned_cert_sha256", a lowercase hex digest of the leaf cert's
 // DER bytes - see hutils/network/net.py) over the legacy blanket allowInsecure/insecure flag, which
 // the manager only still emits when no pin is cached yet. The two are mutually exclusive server-side.
+//
+// pcs may carry multiple hashes separated by "~" (xray-core's own multi-pin format, see
+// infra/conf/transport_internet.go's PinnedPeerCertSha256 parsing) even though the manager only
+// ever emits one today. Malformed entries are logged and dropped rather than passed through to
+// fail confusingly at the TLS layer; if every entry turns out malformed, this deliberately does
+// NOT fall back to insecure (that would silently trade a broken pin for no verification at all) -
+// it returns an empty pin list, so the connection fails closed under normal certificate
+// validation instead.
 func resolvePinnedCertOrInsecure(decoded map[string]string) (insecure bool, pinnedCertSha256 []string) {
 	if pcs, ok := getAny(decoded, "pcs", "pinned_cert_sha256"); ok {
-		if pcs = strings.ToLower(strings.TrimSpace(pcs)); pcs != "" {
-			return false, []string{pcs}
+		if pcs = strings.TrimSpace(pcs); pcs != "" {
+			var pins []string
+			for _, hash := range strings.Split(pcs, "~") {
+				hash = strings.ToLower(strings.TrimSpace(hash))
+				if hash == "" {
+					continue
+				}
+				if !isHexSha256(hash) {
+					fmt.Fprintf(os.Stderr, "ray2sing: ignoring malformed pcs entry (want 64 hex chars): %q\n", hash)
+					continue
+				}
+				pins = append(pins, hash)
+			}
+			if len(pins) > 0 {
+				return false, pins
+			}
 		}
 	}
 	if v, ok := getAny(decoded, "insecure", "allow_insecure"); ok {

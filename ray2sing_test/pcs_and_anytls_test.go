@@ -146,6 +146,51 @@ func assertPinned(t *testing.T, tls *T.OutboundTLSOptions, wantHex string) {
 	}
 }
 
+var testPin2 = "1122334455667788112233445566778811223344556677881122334455667788"[:64]
+
+func TestPcsMultiPin(t *testing.T) {
+	out, err := ray2sing.VlessSingbox("vless://uuid-here@example.com:443?security=tls&sni=s.example.com&pcs=" + testPin + "~" + testPin2)
+	if err != nil {
+		t.Fatalf("VlessSingbox: %v", err)
+	}
+	tls := tlsOptionsOf(t, out.Options)
+	if tls.Insecure {
+		t.Error("Insecure = true, want false")
+	}
+	if !reflect.DeepEqual([]string(tls.PinnedPeerCertificateSha256), []string{testPin, testPin2}) {
+		t.Errorf("PinnedPeerCertificateSha256 = %v, want [%s %s]", tls.PinnedPeerCertificateSha256, testPin, testPin2)
+	}
+}
+
+func TestPcsMalformedEntryDropped(t *testing.T) {
+	// One malformed entry alongside a valid one: the valid pin still applies, malformed is
+	// dropped (not passed through to fail confusingly at the TLS layer).
+	out, err := ray2sing.VlessSingbox("vless://uuid-here@example.com:443?security=tls&sni=s.example.com&pcs=not-hex~" + testPin)
+	if err != nil {
+		t.Fatalf("VlessSingbox: %v", err)
+	}
+	tls := tlsOptionsOf(t, out.Options)
+	if !reflect.DeepEqual([]string(tls.PinnedPeerCertificateSha256), []string{testPin}) {
+		t.Errorf("PinnedPeerCertificateSha256 = %v, want [%s] (malformed entry dropped)", tls.PinnedPeerCertificateSha256, testPin)
+	}
+}
+
+func TestPcsAllMalformedFailsClosed(t *testing.T) {
+	// Every pcs entry malformed, no insecure fallback given: must NOT silently become insecure -
+	// empty pin list, normal certificate validation applies (fails closed).
+	out, err := ray2sing.VlessSingbox("vless://uuid-here@example.com:443?security=tls&sni=s.example.com&pcs=not-hex")
+	if err != nil {
+		t.Fatalf("VlessSingbox: %v", err)
+	}
+	tls := tlsOptionsOf(t, out.Options)
+	if tls.Insecure {
+		t.Error("Insecure = true, want false: an all-malformed pcs must not silently downgrade to insecure")
+	}
+	if len(tls.PinnedPeerCertificateSha256) != 0 {
+		t.Errorf("PinnedPeerCertificateSha256 = %v, want empty", tls.PinnedPeerCertificateSha256)
+	}
+}
+
 // TestInsecureFallbackCasingVariants guards resolvePinnedCertOrInsecure's cleanKey/getAny
 // normalization: the manager emits the same fallback flag as "allowInsecure" (vmess JSON),
 // "allow_insecure" (tuic/anytls/hysteria2 query params - which ParseUrl's normalizeStr turns into
