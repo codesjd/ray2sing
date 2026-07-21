@@ -105,11 +105,13 @@ func AWGSingboxTxt(content string) (*T.Endpoint, error) {
 				peer.PresharedKey = val
 
 			case "AllowedIPs":
-				pfx, err := netip.ParsePrefix(val)
-				if err != nil {
-					return nil, fmt.Errorf("invalid AllowedIPs: %w", err)
+				for _, ip := range strings.Split(val, ",") {
+					pfx, err := netip.ParsePrefix(strings.TrimSpace(ip))
+					if err != nil {
+						return nil, fmt.Errorf("invalid AllowedIPs: %w", err)
+					}
+					peer.AllowedIPs = append(peer.AllowedIPs, pfx)
 				}
-				peer.AllowedIPs = badoption.Listable[netip.Prefix]{pfx}
 
 			case "Endpoint":
 				host, portStr, err := net.SplitHostPort(val)
@@ -151,7 +153,7 @@ func AWGSingboxTxt(content string) (*T.Endpoint, error) {
 		// fmt.Println(">>out", C.TypeAwg)
 		return &T.Endpoint{
 			Type: C.TypeWireGuard,
-			Tag:  "wiregaurd",
+			Tag:  "wireguard",
 			Options: &T.WireGuardEndpointOptions{
 				PrivateKey: privateKey,
 				Address:    badoption.Listable[netip.Prefix](addresses),
