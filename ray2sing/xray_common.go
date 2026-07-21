@@ -270,15 +270,15 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 	if fp == "" {
 		// fp = "chrome"
 	}
-	allowInsecure := false
-	if insecure, err := getOneOf(decoded, "insecure", "allowinsecure"); err == nil {
-		allowInsecure = insecure == "true" || insecure == "1"
-	}
+	// xray-core's own JSON schema already has a pinnedPeerCertSha256 field (hex string) with
+	// exactly the manager's pcs= semantics, so unlike the sing-box path this needs no separate
+	// verification plumbing - just pass pcs straight through under xray-core's own field name.
+	insecureFallback, pinnedCertSha256 := resolvePinnedCertOrInsecure(decoded)
 
-	return map[string]any{
+	tlsSettings := map[string]any{
 		"serverName":       serverName,
 		"rejectUnknownSni": false,
-		"allowInsecure":    allowInsecure,
+		"allowInsecure":    insecureFallback,
 		"alpn":             alpn,
 		// "minVersion": "1.2",
 		// "maxVersion": "1.3",
@@ -286,6 +286,10 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 		// "enableSessionResumption": true,
 		"fingerprint": fp,
 	}
+	if len(pinnedCertSha256) > 0 {
+		tlsSettings["pinnedPeerCertSha256"] = pinnedCertSha256[0]
+	}
+	return tlsSettings
 }
 func getRealityOptionsXray(decoded map[string]string) map[string]any {
 	if !(decoded["security"] == "reality") {

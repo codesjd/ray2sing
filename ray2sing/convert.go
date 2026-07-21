@@ -88,7 +88,7 @@ func processSingleConfig(config string, useXrayWhenPossible bool) (outend *OutEn
 	}()
 	// configDecoded := decodeUrlBase64IfNeeded(config)
 	outend = &OutEnd{}
-	if false && (useXrayWhenPossible || strings.Contains(config, "&core=xray")) {
+	if useXrayWhenPossible || strings.Contains(config, "&core=xray") {
 		for k, v := range xrayConfigTypes {
 			if strings.HasPrefix(config, k) {
 				outend.outbound, err = v(config)
