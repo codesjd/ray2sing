@@ -13,17 +13,21 @@ import (
 )
 
 func CheckUrlAndJson(url string, expectedJSON string, t *testing.T) {
-	configJson, err := Ray2Singbox(libbox.BaseContext(nil), url, false)
+	ctx := libbox.BaseContext(nil)
+	configJson, err := Ray2Singbox(ctx, url, false)
 	if err != nil {
 		t.Fatalf("Error parsing URL: %v", err)
 	}
 
-	// Convert the expected JSON to a comparable Go structure
-	expectedConfig, expectedPretty, err := json2map_prettystr(expectedJSON)
+	// Convert the expected JSON to a comparable Go structure. Both this and the actual config
+	// below need libbox.BaseContext (not context.Background()) - UnmarshalJSONContext resolves
+	// outbound "type" strings (e.g. "vless") against the outbound options registry that context
+	// carries, and fails with "missing outbound options registry in context" without it.
+	expectedConfig, expectedPretty, err := json2map_prettystr(ctx, expectedJSON)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal expected JSON: %v \n%v", err, expectedPretty)
 	}
-	config, configPretty, err := json2map_prettystr(string(configJson))
+	config, configPretty, err := json2map_prettystr(ctx, string(configJson))
 	if err != nil {
 		t.Fatalf("Failed to unmarshal config JSON: %v \n%v", err, configPretty)
 	}
@@ -34,9 +38,9 @@ func CheckUrlAndJson(url string, expectedJSON string, t *testing.T) {
 	}
 }
 
-func json2map_prettystr(injson string) ([]T.Outbound, string, error) {
+func json2map_prettystr(ctx context.Context, injson string) ([]T.Outbound, string, error) {
 	var conf T.Options
-	if err := conf.UnmarshalJSONContext(context.Background(), []byte(injson)); err != nil {
+	if err := conf.UnmarshalJSONContext(ctx, []byte(injson)); err != nil {
 		return conf.Outbounds, "", err
 	}
 	if len(conf.Outbounds) == 0 {
