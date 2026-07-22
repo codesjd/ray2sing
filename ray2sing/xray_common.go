@@ -440,6 +440,11 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 	if net == "" {
 		net = decoded["type"]
 	}
+	// ParseUrl's normalizeStr only lowercases query *keys*, not values, so a link using
+	// "type=KCP"/"net=WS" etc reaches here with its original casing - the switch below matches
+	// exact lowercase strings, so anything but all-lowercase would otherwise fail with a
+	// confusing "unknown transport type" for a transport that's actually supported.
+	net = strings.ToLower(net)
 	if path == "" {
 		path = decoded["servicename"]
 	}
@@ -497,7 +502,11 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 		res["security"] = "reality"
 		res["realitySettings"] = reality
 	}
-	if finalmask := getFinalmask(decoded); finalmask != nil {
+	finalmask, err := getFinalmask(decoded)
+	if err != nil {
+		return nil, err
+	}
+	if finalmask != nil {
 		res["finalmask"] = finalmask
 	}
 	return res, nil
@@ -514,23 +523,53 @@ func getkcp(decoded map[string]string) map[string]any {
 	if seed := decoded["seed"]; seed != "" {
 		kcp["seed"] = seed
 	}
+	// mtu/tti/capacity/buffer sizes: manager-generated xdns/xicmp links intentionally set a small
+	// mtu (tiny DNS-sized UDP payloads don't need a full-size KCP frame), so these need to actually
+	// reach xray-core's kcpSettings instead of being silently dropped - xray/outbound.go's
+	// clampKcpMtu then adapts anything outside xray-core's own hard-enforced 576-1460 range rather
+	// than letting the build fail.
+	if mtu := toIntN(decoded["mtu"]); mtu != nil {
+		kcp["mtu"] = *mtu
+	}
+	if tti := toIntN(decoded["tti"]); tti != nil {
+		kcp["tti"] = *tti
+	}
+	if v := toIntN(decoded["uplinkcapacity"]); v != nil {
+		kcp["uplinkCapacity"] = *v
+	}
+	if v := toIntN(decoded["downlinkcapacity"]); v != nil {
+		kcp["downlinkCapacity"] = *v
+	}
+	if congestion, ok := decoded["congestion"]; ok {
+		kcp["congestion"] = toBool(congestion, false)
+	}
+	if v := toIntN(decoded["readbuffersize"]); v != nil {
+		kcp["readBufferSize"] = *v
+	}
+	if v := toIntN(decoded["writebuffersize"]); v != nil {
+		kcp["writeBufferSize"] = *v
+	}
 	return kcp
 }
 
 // getFinalmask parses the "fm" URI param - a URL-encoded JSON object - into Xray-core's
 // "finalmask" stream-settings field, which wraps additional per-direction transforms (e.g. the
 // "xdns"/"xicmp" udp masks) around the underlying transport. It's opaque to this converter: the
-// value is handed to Xray-core as-is rather than validated field-by-field.
-func getFinalmask(decoded map[string]string) map[string]any {
+// value is handed to Xray-core as-is rather than validated field-by-field. A malformed "fm" fails
+// the conversion rather than being dropped silently - "fm" being present at all means the link
+// specifically requires that mask (that's the whole point of an xdns/xicmp link), so silently
+// producing a plain, unmasked outbound instead would look like it imported fine and then just not
+// behave as intended, with no indication why.
+func getFinalmask(decoded map[string]string) (map[string]any, error) {
 	fm := decoded["fm"]
 	if fm == "" {
-		return nil
+		return nil, nil
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(fm), &parsed); err != nil {
-		return nil
+		return nil, E.New("invalid fm (finalmask) param: " + err.Error())
 	}
-	return parsed
+	return parsed, nil
 }
 
 // func getXrayFragmentOptions(decoded map[string]string) *conf.Fragment {

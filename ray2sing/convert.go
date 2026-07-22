@@ -89,11 +89,27 @@ func requiresXrayCore(config string) bool {
 		return false
 	}
 	q := u.Query()
-	net := q.Get("net")
+	// url.Query() is case-sensitive on both key and value; ParseUrl's own decoded map (used by
+	// every other param lookup in this package) normalizes keys via normalizeStr, but re-parsing
+	// here bypasses that - and even key case aside, the query *value* itself ("KCP" vs "kcp") was
+	// never normalized anywhere, so a panel/link using different casing for either would silently
+	// miss this gate and fall through to a native parser that can't handle KCP/finalmask at all.
+	net := strings.ToLower(getFirstQueryValue(q, "net"))
 	if net == "" {
-		net = q.Get("type")
+		net = strings.ToLower(getFirstQueryValue(q, "type"))
 	}
-	return net == "kcp" || net == "mkcp" || q.Get("fm") != ""
+	return net == "kcp" || net == "mkcp" || getFirstQueryValue(q, "fm") != ""
+}
+
+// getFirstQueryValue looks up a query key case-insensitively (net.URL.Values is a case-sensitive
+// map, so "Net"/"NET"/"net" are otherwise three different keys).
+func getFirstQueryValue(q url.Values, key string) string {
+	for k, v := range q {
+		if strings.EqualFold(k, key) && len(v) > 0 {
+			return v[0]
+		}
+	}
+	return ""
 }
 
 func processSingleConfig(config string, useXrayWhenPossible bool) (outend *OutEnd, err error) {
@@ -108,12 +124,22 @@ func processSingleConfig(config string, useXrayWhenPossible bool) (outend *OutEn
 	}()
 	// configDecoded := decodeUrlBase64IfNeeded(config)
 	outend = &OutEnd{}
-	if useXrayWhenPossible || strings.Contains(config, "&core=xray") || requiresXrayCore(config) {
+	xrayRequired := requiresXrayCore(config)
+	if useXrayWhenPossible || strings.Contains(config, "&core=xray") || xrayRequired {
 		for k, v := range xrayConfigTypes {
 			if strings.HasPrefix(config, k) {
 				outend.outbound, err = v(config)
 				break
 			}
+		}
+		if err != nil && xrayRequired {
+			// requiresXrayCore means this link uses a feature (KCP transport, "fm"/finalmask)
+			// that doesn't exist in sing-box's native protocol implementations at all - falling
+			// through to the native parser below on failure would silently replace the real
+			// error (e.g. "invalid fm param") with a misleading, unrelated one from a parser
+			// that was never going to understand this link either way (typically
+			// "unknown transport type: kcp").
+			return nil, err
 		}
 	}
 	if outend.outbound == nil {

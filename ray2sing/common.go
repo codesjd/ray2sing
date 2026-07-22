@@ -79,7 +79,7 @@ func getTLSOptions(decoded map[string]string) T.OutboundTLSOptionsContainer {
 			tlsOptions.ALPN = []string{"h2", "http/1.1"}
 		} else {
 			tlsOptions.ALPN = strings.Split(alpn, ",")
-			if getALPNversion(tlsOptions.ALPN) == 3 && getOneOfN(decoded, "", "type") == "xhttp" || getOneOfN(decoded, "", "net") == "xhttp" {
+			if getALPNversion(tlsOptions.ALPN) == 3 && (getOneOfN(decoded, "", "type") == "xhttp" || getOneOfN(decoded, "", "net") == "xhttp") {
 				tlsOptions.UTLS = nil //TODO utls quic has bug
 			}
 		}
