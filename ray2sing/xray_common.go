@@ -502,12 +502,12 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 		res["security"] = "reality"
 		res["realitySettings"] = reality
 	}
-	finalmask, err := getFinalmask(decoded)
+	udpmasks, err := getFinalmask(decoded)
 	if err != nil {
 		return nil, err
 	}
-	if finalmask != nil {
-		res["finalmask"] = finalmask
+	if len(udpmasks) > 0 {
+		res["udpmasks"] = udpmasks
 	}
 	return res, nil
 }
@@ -552,24 +552,34 @@ func getkcp(decoded map[string]string) map[string]any {
 	return kcp
 }
 
-// getFinalmask parses the "fm" URI param - a URL-encoded JSON object - into Xray-core's
-// "finalmask" stream-settings field, which wraps additional per-direction transforms (e.g. the
-// "xdns"/"xicmp" udp masks) around the underlying transport. It's opaque to this converter: the
-// value is handed to Xray-core as-is rather than validated field-by-field. A malformed "fm" fails
-// the conversion rather than being dropped silently - "fm" being present at all means the link
-// specifically requires that mask (that's the whole point of an xdns/xicmp link), so silently
-// producing a plain, unmasked outbound instead would look like it imported fine and then just not
-// behave as intended, with no indication why.
-func getFinalmask(decoded map[string]string) (map[string]any, error) {
+// getFinalmask parses the "fm" URI param - a URL-encoded JSON object shaped
+// {"udp":[{"type":"...","settings":{...}}, ...]} - into the array Xray-core's StreamConfig
+// actually expects under its "udpmasks" field (infra/conf/transport_internet.go's
+// `Udpmasks []*FinalMask `json:"udpmasks"``; each entry is `{Type string; Settings
+// *json.RawMessage}`, matching the per-entry shape "fm" already uses). There is no top-level
+// "finalmask" field in Xray-core's schema at all, and no wrapping "udp" key either - the field is
+// the array itself. This function previously returned the raw parsed object as-is, which the
+// caller then assigned to a "finalmask" key; since neither that key name nor the extra "udp"
+// wrapping exist in Xray-core's JSON schema, the whole block was silently dropped on the
+// json.Marshal/Unmarshal round-trip in xray/outbound.go's New() - the outbound built and started
+// as plain KCP with no mask applied at all, rather than failing or actually masking anything.
+//
+// A malformed "fm" still fails the conversion rather than being dropped silently - "fm" being
+// present at all means the link specifically requires that mask (that's the whole point of an
+// xdns/xicmp link), so silently producing a plain, unmasked outbound instead would look like it
+// imported fine and then just not behave as intended, with no indication why.
+func getFinalmask(decoded map[string]string) ([]any, error) {
 	fm := decoded["fm"]
 	if fm == "" {
 		return nil, nil
 	}
-	var parsed map[string]any
+	var parsed struct {
+		UDP []any `json:"udp"`
+	}
 	if err := json.Unmarshal([]byte(fm), &parsed); err != nil {
 		return nil, E.New("invalid fm (finalmask) param: " + err.Error())
 	}
-	return parsed, nil
+	return parsed.UDP, nil
 }
 
 // func getXrayFragmentOptions(decoded map[string]string) *conf.Fragment {

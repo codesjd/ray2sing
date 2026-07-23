@@ -1,6 +1,7 @@
 package ray2sing_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hiddify/ray2sing/ray2sing"
@@ -20,7 +21,20 @@ import (
 // all (Xray-core-only features), such a link would also never reach the xray-core conversion path
 // to begin with unless "use xray-core when possible" happened to be on - requiresXrayCore forces
 // it for exactly this case, the same way an explicit "&core=xray" already did.
-func TestXDNSLinkStartsRealXrayCoreInstance(t *testing.T) {
+//
+// TestXDNSLinkConvertsButXrayCoreRejectsUnsupportedMaskType: getFinalmask used to write the parsed
+// "fm" object under a "finalmask" key wrapping {"udp": [...]}, neither of which exist in
+// Xray-core's actual schema (the real field is a top-level "udpmasks" array - see getFinalmask's
+// doc comment) - so the whole mask block was silently dropped on the JSON round-trip in
+// xray/outbound.go's New(), and the outbound built and started as plain, unmasked KCP without
+// error. Now that the key mapping is fixed and "udpmasks" actually reaches Xray-core, a second,
+// separate fact becomes visible: this vendored Xray-core fork's mask-type registry (its
+// udpmaskLoader, infra/conf/transport_internet.go) only ever registers "salamander" - "xdns" and
+// "xicmp" are not implemented there at all, confirmed against both this pinned build and the live
+// github.com/hiddify/xray-core main branch. So a real xdns/xicmp link now correctly fails to
+// build (rather than silently succeeding while doing nothing), with an honest "unknown config id"
+// error - this is an upstream Xray-core capability gap, not something fixable in this repo alone.
+func TestXDNSLinkConvertsButXrayCoreRejectsUnsupportedMaskType(t *testing.T) {
 	link := `vless://6aca7d1d-632c-464f-b8de-f640962d89c7@8.8.8.8:53?type=kcp&headerType=none&security=none&fm=%7B%22udp%22%3A%5B%7B%22type%22%3A%22xdns%22%2C%22settings%22%3A%7B%22resolvers%22%3A%5B%22a.onionchips.sbs%2Budp%3A//8.8.8.8%3A53%22%2C%22a.onionchips.sbs%2Budp%3A//1.1.1.1%3A53%22%5D%7D%7D%5D%7D#a.onionchips.sbs%20XDNS`
 
 	ctx := libbox.BaseContext(nil)
@@ -31,11 +45,12 @@ func TestXDNSLinkStartsRealXrayCoreInstance(t *testing.T) {
 	if len(opts.Outbounds) != 1 || opts.Outbounds[0].Type != "xray" {
 		t.Fatalf("expected 1 'xray'-type outbound, got %+v", opts.Outbounds)
 	}
-	// CheckConfigOptions actually builds and starts an embedded Xray-core instance for this
-	// outbound - the strongest available signal that "kcpSettings"/"finalmask" are wired
-	// correctly and that the bundled Xray-core build genuinely understands the xdns transform.
-	if err := libbox.CheckConfigOptions(opts); err != nil {
-		t.Fatalf("real xray-core instance failed to start: %v", err)
+	err = libbox.CheckConfigOptions(opts)
+	if err == nil {
+		t.Fatalf("expected building a real xray-core instance to fail (xdns mask type isn't implemented by this Xray-core fork), but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "xdns") {
+		t.Fatalf("expected the build error to name the unsupported mask type 'xdns', got: %v", err)
 	}
 }
 
@@ -55,7 +70,10 @@ func TestMalformedFmFailsRatherThanSilentlyDroppingTheMask(t *testing.T) {
 	}
 }
 
-func TestXICMPLinkStartsRealXrayCoreInstance(t *testing.T) {
+// TestXICMPLinkConvertsButXrayCoreRejectsUnsupportedMaskType: see
+// TestXDNSLinkConvertsButXrayCoreRejectsUnsupportedMaskType's doc comment - "xicmp" hits the exact
+// same upstream Xray-core capability gap (only "salamander" is a registered mask type).
+func TestXICMPLinkConvertsButXrayCoreRejectsUnsupportedMaskType(t *testing.T) {
 	link := `vless://6aca7d1d-632c-464f-b8de-f640962d89c7@104.238.173.131:5605?type=kcp&headerType=none&security=none&fm=%7B%22udp%22%3A%5B%7B%22type%22%3A%22xicmp%22%2C%22settings%22%3A%7B%22dgram%22%3Atrue%2C%22ips%22%3A%5B%5D%7D%7D%5D%7D#ns.onionchips.sbs%20XICMP`
 
 	ctx := libbox.BaseContext(nil)
@@ -66,8 +84,12 @@ func TestXICMPLinkStartsRealXrayCoreInstance(t *testing.T) {
 	if len(opts.Outbounds) != 1 || opts.Outbounds[0].Type != "xray" {
 		t.Fatalf("expected 1 'xray'-type outbound, got %+v", opts.Outbounds)
 	}
-	if err := libbox.CheckConfigOptions(opts); err != nil {
-		t.Fatalf("real xray-core instance failed to start: %v", err)
+	err = libbox.CheckConfigOptions(opts)
+	if err == nil {
+		t.Fatalf("expected building a real xray-core instance to fail (xicmp mask type isn't implemented by this Xray-core fork), but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "xicmp") {
+		t.Fatalf("expected the build error to name the unsupported mask type 'xicmp', got: %v", err)
 	}
 }
 
