@@ -270,3 +270,7 @@ replace github.com/ameshkov/dnscrypt/v2 => github.com/shtorm-7/dnscrypt/v2 v2.4.
 replace github.com/Psiphon-Labs/quic-go => github.com/hiddify/psiphon-quic-go v0.0.0-20260205155832-2164d1653824
 
 replace github.com/Psiphon-Labs/psiphon-tls => ../hiddify-sing-box/replace/psiphon-tls
+
+// See hiddify-sing-box/replace/xray-core: patches xicmp to tolerate hosts missing IPv4 or IPv6
+// unprivileged ICMP support instead of refusing the outbound entirely.
+replace github.com/xtls/xray-core => ../hiddify-sing-box/replace/xray-core
