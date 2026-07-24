@@ -507,7 +507,7 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 		return nil, err
 	}
 	if len(udpmasks) > 0 {
-		res["udpmasks"] = udpmasks
+		res["finalmask"] = map[string]any{"udp": udpmasks}
 	}
 	return res, nil
 }
@@ -553,16 +553,19 @@ func getkcp(decoded map[string]string) map[string]any {
 }
 
 // getFinalmask parses the "fm" URI param - a URL-encoded JSON object shaped
-// {"udp":[{"type":"...","settings":{...}}, ...]} - into the array Xray-core's StreamConfig
-// actually expects under its "udpmasks" field (infra/conf/transport_internet.go's
-// `Udpmasks []*FinalMask `json:"udpmasks"``; each entry is `{Type string; Settings
-// *json.RawMessage}`, matching the per-entry shape "fm" already uses). There is no top-level
-// "finalmask" field in Xray-core's schema at all, and no wrapping "udp" key either - the field is
-// the array itself. This function previously returned the raw parsed object as-is, which the
-// caller then assigned to a "finalmask" key; since neither that key name nor the extra "udp"
-// wrapping exist in Xray-core's JSON schema, the whole block was silently dropped on the
-// json.Marshal/Unmarshal round-trip in xray/outbound.go's New() - the outbound built and started
-// as plain KCP with no mask applied at all, rather than failing or actually masking anything.
+// {"udp":[{"type":"...","settings":{...}}, ...]} - and returns the "udp" array. The caller wraps
+// this back under a top-level "finalmask" key ({"finalmask":{"udp":[...]}}), which is what
+// Xray-core's infra/conf.StreamConfig actually declares - confirmed directly against
+// infra/conf/transport_internet.go's struct tags: `FinalMask *FinalMask `json:"finalmask"`` where
+// `FinalMask.Udp []Mask `json:"udp"``. There is no top-level "udpmasks" field anywhere in
+// Xray-core's JSON-config-file schema (that name only exists as an unrelated internal Go field
+// on the runtime protobuf-ish internet.StreamConfig type StreamConfig.Build() produces - not
+// something JSON ever gets unmarshaled into). A prior version of this function returned "udpmasks"
+// directly instead of re-wrapping under "finalmask", based on conflating those two unrelated
+// fields; json.Unmarshal into infra/conf.StreamConfig silently ignores unrecognized keys, so that
+// mistake still built and started an instance without any error - just one running plain unmasked
+// KCP, with the mask dropped. See hiddify-sing-box's
+// TestFinalmaskKeyReachesXrayCoreStreamConfig for a direct proof of which key actually works.
 //
 // A malformed "fm" still fails the conversion rather than being dropped silently - "fm" being
 // present at all means the link specifically requires that mask (that's the whole point of an
