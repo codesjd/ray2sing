@@ -149,7 +149,7 @@ func AWGSingboxTxt(content string) (*T.Endpoint, error) {
 	isAwg := jc+jmin+jmax+s1+s2+s3+s4 == 0 && h1+h2+h3+h4+i1+i2+i3+i4 == ""
 	noise := defaultWireguardNoiseOptions()
 	noise.FakePacket.Enabled = isAwg
-	if true || isAwg {
+	if isAwg {
 		// fmt.Println(">>out", C.TypeAwg)
 		return &T.Endpoint{
 			Type: C.TypeWireGuard,
@@ -319,12 +319,18 @@ func AWGSingbox(raw string) (*T.Endpoint, error) {
 	var out *T.Endpoint
 	// AwgEndpointOptions lost its IsAvailble() method when the nested Awg sub-struct was
 	// flattened onto it directly - inline the same "any obfuscation param configured" check.
+	// isAwg true means genuine Amnezia-WG protocol params (Jc/Jmin/.../I5) are present - those
+	// need the dedicated Awg endpoint type to actually be applied; routing them through plain
+	// WireGuard instead (as "if true || isAwg" below used to, unconditionally) silently discards
+	// them and substitutes sing-box's own unrelated "fake packet" Noise obfuscation, which a real
+	// Amnezia-WG server never expects and doesn't negotiate - producing exactly the "detected as
+	// regular WireGuard and fails to connect" symptom this was reported as.
 	isAwg := opts.Jc != 0 || opts.Jmin != 0 || opts.Jmax != 0 ||
 		opts.S1 != 0 || opts.S2 != 0 || opts.S3 != 0 || opts.S4 != 0 ||
 		opts.H1 != "" || opts.H2 != "" || opts.H3 != "" || opts.H4 != "" ||
 		opts.I1 != "" || opts.I2 != "" || opts.I3 != "" || opts.I4 != "" || opts.I5 != ""
 
-	if true || isAwg {
+	if !isAwg {
 		wgopts := T.WireGuardEndpointOptions{
 			PrivateKey: opts.PrivateKey,
 			Address:    opts.Address,

@@ -9,7 +9,7 @@ import (
 
 // Reported as "not working, even though the exact same configuration works fine in the official
 // Amnezia client": a wg-quick/AmneziaWG ".conf" text block (as opposed to the wg:// link form,
-// which already worked). Two real bugs compounded to break this:
+// which already worked). Three real bugs compounded to break this:
 //
 //  1. expandDecodedConfig's line-splitter creates a new chunk at every line starting with "#" (so
 //     that a genuine "# label" comment ahead of the next real link doesn't get glued onto it) - but
@@ -19,6 +19,15 @@ import (
 //  2. AWGSingboxTxt's "AllowedIPs" field only parsed a single CIDR, not the "0.0.0.0/0, ::/0"
 //     comma-separated form actually used here (unlike "Address" right above it in the same
 //     function, which already split on commas).
+//  3. A later, separate regression (found while investigating a report that "Amnezia is detected
+//     as regular WireGuard and fails to connect"): AWGSingboxTxt/AWGSingbox both had "if true ||
+//     isAwg" instead of "if isAwg"/"if !isAwg" - a leftover forcing every config down the plain
+//     WireGuard branch unconditionally, silently discarding real Jc/Jmin/Jmax/H1-4/S1-4/I1-5
+//     Amnezia-WG protocol params (which only the dedicated "awg" endpoint type actually applies)
+//     regardless of whether they were present. A real Amnezia-WG server never negotiates plain
+//     WireGuard's handshake, so the connection failed outright once past config parsing - which
+//     the two fixes above by themselves weren't enough to catch, since neither asserted on the
+//     resulting endpoint type for a config that actually sets Jc/Jmin/etc.
 func TestAmneziaConfTextParses(t *testing.T) {
 	conf := `#=========104.238.173.131 AmneziaWG================
 [Interface]
@@ -56,8 +65,11 @@ PersistentKeepalive = 25
 	if len(opts.Endpoints) != 1 {
 		t.Fatalf("expected 1 endpoint, got %d: %+v", len(opts.Endpoints), opts.Endpoints)
 	}
-	if opts.Endpoints[0].Type != "wireguard" {
-		t.Fatalf("expected a wireguard endpoint, got type %q", opts.Endpoints[0].Type)
+	// This config sets real Jc/Jmin/Jmax/H1-4/S1-4 Amnezia-WG protocol params, so it must produce
+	// an "awg" endpoint (the only type that actually applies them) - not "wireguard", which
+	// would silently drop every one of those fields.
+	if opts.Endpoints[0].Type != "awg" {
+		t.Fatalf("expected an awg endpoint (real Jc/Jmin/etc params were set), got type %q", opts.Endpoints[0].Type)
 	}
 }
 
