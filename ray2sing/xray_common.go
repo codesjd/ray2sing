@@ -2,6 +2,8 @@ package ray2sing
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 
 	E "github.com/sagernet/sing/common/exceptions"
 	// "github.com/xtls/xray-core/infra/conf"
@@ -278,13 +280,27 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 	tlsSettings := map[string]any{
 		"serverName":       serverName,
 		"rejectUnknownSni": false,
-		"allowInsecure":    insecureFallback,
 		"alpn":             alpn,
 		// "minVersion": "1.2",
 		// "maxVersion": "1.3",
 		// "disableSystemRoot": false,
 		// "enableSessionResumption": true,
 		"fingerprint": fp,
+	}
+	// "allowInsecure" is a permanent hard build error in real upstream xray-core as of
+	// 2026-06-01 (infra/conf/transport_internet.go's StreamConfig.Build():
+	// "if c.AllowInsecure { ... errors.PrintRemovedFeatureError }" - unconditionally, not just a
+	// warning past that date) - confirmed against a real user's app.log ("The feature
+	// 'allowInsecure' has been removed and migrated to 'pinnedPeerCertSha256'"). Setting it to
+	// true (as this used to do unconditionally whenever a link asked for insecure fallback with
+	// no pcs= pin) made that outbound permanently unbuildable rather than merely insecure. There
+	// is no way to synthesize a pin client-side for a link that only ever asked for blanket
+	// insecure, so the safest available behavior is to omit the field entirely and let the
+	// connection attempt with normal certificate validation - it will simply fail with an
+	// ordinary TLS error if the server's cert genuinely doesn't validate, rather than failing
+	// this same way unconditionally on every attempt regardless of whether that's even true.
+	if insecureFallback {
+		fmt.Fprintln(os.Stderr, "ray2sing: ignoring allow_insecure - xray-core permanently rejects it; use pcs= (pinned_cert_sha256) instead")
 	}
 	if len(pinnedCertSha256) > 0 {
 		// xray-core's pinnedPeerCertSha256 accepts multiple hashes "~"-joined (see
@@ -556,8 +572,8 @@ func getkcp(decoded map[string]string) map[string]any {
 // {"udp":[{"type":"...","settings":{...}}, ...]} - and returns the "udp" array. The caller wraps
 // this back under a top-level "finalmask" key ({"finalmask":{"udp":[...]}}), which is what
 // Xray-core's infra/conf.StreamConfig actually declares - confirmed directly against
-// infra/conf/transport_internet.go's struct tags: `FinalMask *FinalMask `json:"finalmask"`` where
-// `FinalMask.Udp []Mask `json:"udp"``. There is no top-level "udpmasks" field anywhere in
+// infra/conf/transport_internet.go's struct tags: `FinalMask *FinalMask `json:"finalmask"“ where
+// `FinalMask.Udp []Mask `json:"udp"“. There is no top-level "udpmasks" field anywhere in
 // Xray-core's JSON-config-file schema (that name only exists as an unrelated internal Go field
 // on the runtime protobuf-ish internet.StreamConfig type StreamConfig.Build() produces - not
 // something JSON ever gets unmarshaled into). A prior version of this function returned "udpmasks"
