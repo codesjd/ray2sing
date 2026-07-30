@@ -5,25 +5,6 @@ import (
 	"strings"
 )
 
-func looksLikeBase64(s string) bool {
-	if len(s) < 4 {
-		return false
-	}
-	valid := 0
-	for _, r := range s {
-		switch {
-		case r >= 'A' && r <= 'Z',
-			r >= 'a' && r <= 'z',
-			r >= '0' && r <= '9',
-			r == '+', r == '/', r == '-', r == '_', r == '=':
-			valid++
-		default:
-			return false
-		}
-	}
-	return valid >= len(s)-1 // tolerate 1–2 bad chars
-}
-
 // decodeBase64FaultTolerant tries many variants and returns the first successful decode.
 // If none succeed it returns an error containing the debug attempts.
 func decodeBase64FaultTolerant(raw string) (string, error) {
