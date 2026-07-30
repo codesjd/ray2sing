@@ -10,7 +10,7 @@ func VmessXray(vmessURL string) (*T.Outbound, error) {
 		return nil, err
 	}
 
-	port := toInt16(decoded["port"], 443)
+	port := toUInt16(decoded["port"], 443)
 
 	if err != nil {
 		return nil, err
