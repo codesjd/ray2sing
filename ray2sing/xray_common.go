@@ -269,9 +269,8 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 	}
 
 	fp := decoded["fp"]
-	if fp == "" {
-		// fp = "chrome"
-	}
+	// intentionally left empty for non-reality TLS - matches sing-box's getTLSOptions,
+	// which also only defaults the fingerprint for reality (see getRealityOptionsXray).
 	// xray-core's own JSON schema already has a pinnedPeerCertSha256 field (hex string) with
 	// exactly the manager's pcs= semantics, so unlike the sing-box path this needs no separate
 	// verification plumbing - just pass pcs straight through under xray-core's own field name.
@@ -325,7 +324,7 @@ func getRealityOptionsXray(decoded map[string]string) map[string]any {
 
 	fp := decoded["fp"]
 	if fp == "" {
-		// fp = "chrome"
+		fp = "chrome"
 	}
 
 	return map[string]any{
