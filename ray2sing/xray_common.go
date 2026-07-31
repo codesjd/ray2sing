@@ -2,6 +2,8 @@ package ray2sing
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 
 	E "github.com/sagernet/sing/common/exceptions"
 	// "github.com/xtls/xray-core/infra/conf"
@@ -267,18 +269,16 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 	}
 
 	fp := decoded["fp"]
-	if fp == "" {
-		// fp = "chrome"
-	}
-	allowInsecure := false
-	if insecure, err := getOneOf(decoded, "insecure", "allowinsecure"); err == nil {
-		allowInsecure = insecure == "true" || insecure == "1"
-	}
+	// intentionally left empty for non-reality TLS - matches sing-box's getTLSOptions,
+	// which also only defaults the fingerprint for reality (see getRealityOptionsXray).
+	// xray-core's own JSON schema already has a pinnedPeerCertSha256 field (hex string) with
+	// exactly the manager's pcs= semantics, so unlike the sing-box path this needs no separate
+	// verification plumbing - just pass pcs straight through under xray-core's own field name.
+	insecureFallback, pinnedCertSha256 := resolvePinnedCertOrInsecure(decoded)
 
-	return map[string]any{
+	tlsSettings := map[string]any{
 		"serverName":       serverName,
 		"rejectUnknownSni": false,
-		"allowInsecure":    allowInsecure,
 		"alpn":             alpn,
 		// "minVersion": "1.2",
 		// "maxVersion": "1.3",
@@ -286,6 +286,28 @@ func getTLSOptionsXray(decoded map[string]string) map[string]any {
 		// "enableSessionResumption": true,
 		"fingerprint": fp,
 	}
+	// "allowInsecure" is a permanent hard build error in real upstream xray-core as of
+	// 2026-06-01 (infra/conf/transport_internet.go's StreamConfig.Build():
+	// "if c.AllowInsecure { ... errors.PrintRemovedFeatureError }" - unconditionally, not just a
+	// warning past that date) - confirmed against a real user's app.log ("The feature
+	// 'allowInsecure' has been removed and migrated to 'pinnedPeerCertSha256'"). Setting it to
+	// true (as this used to do unconditionally whenever a link asked for insecure fallback with
+	// no pcs= pin) made that outbound permanently unbuildable rather than merely insecure. There
+	// is no way to synthesize a pin client-side for a link that only ever asked for blanket
+	// insecure, so the safest available behavior is to omit the field entirely and let the
+	// connection attempt with normal certificate validation - it will simply fail with an
+	// ordinary TLS error if the server's cert genuinely doesn't validate, rather than failing
+	// this same way unconditionally on every attempt regardless of whether that's even true.
+	if insecureFallback {
+		fmt.Fprintln(os.Stderr, "ray2sing: ignoring allow_insecure - xray-core permanently rejects it; use pcs= (pinned_cert_sha256) instead")
+	}
+	if len(pinnedCertSha256) > 0 {
+		// xray-core's pinnedPeerCertSha256 accepts multiple hashes "~"-joined (see
+		// infra/conf/transport_internet.go); join rather than taking just the first so a
+		// future multi-pin pcs= (the manager only ever emits one today) round-trips correctly.
+		tlsSettings["pinnedPeerCertSha256"] = strings.Join(pinnedCertSha256, "~")
+	}
+	return tlsSettings
 }
 func getRealityOptionsXray(decoded map[string]string) map[string]any {
 	if !(decoded["security"] == "reality") {
@@ -302,7 +324,7 @@ func getRealityOptionsXray(decoded map[string]string) map[string]any {
 
 	fp := decoded["fp"]
 	if fp == "" {
-		// fp = "chrome"
+		fp = "chrome"
 	}
 
 	return map[string]any{
@@ -433,6 +455,11 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 	if net == "" {
 		net = decoded["type"]
 	}
+	// ParseUrl's normalizeStr only lowercases query *keys*, not values, so a link using
+	// "type=KCP"/"net=WS" etc reaches here with its original casing - the switch below matches
+	// exact lowercase strings, so anything but all-lowercase would otherwise fail with a
+	// confusing "unknown transport type" for a transport that's actually supported.
+	net = strings.ToLower(net)
 	if path == "" {
 		path = decoded["servicename"]
 	}
@@ -447,8 +474,13 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 	if net == "tcp" {
 		net = "raw"
 	}
+	if net == "kcp" {
+		net = "mkcp"
+	}
 	res["network"] = net
 	switch net {
+	case "mkcp":
+		res["kcpSettings"] = getkcp(decoded)
 	case "raw":
 		res[net+"Settings"] = map[string]any{}
 		decoded["alpn"] = "http/1.1"
@@ -485,7 +517,87 @@ func getStreamSettingsXray(decoded map[string]string) (map[string]any, error) {
 		res["security"] = "reality"
 		res["realitySettings"] = reality
 	}
+	udpmasks, err := getFinalmask(decoded)
+	if err != nil {
+		return nil, err
+	}
+	if len(udpmasks) > 0 {
+		res["finalmask"] = map[string]any{"udp": udpmasks}
+	}
 	return res, nil
+}
+
+// getkcp builds Xray-core's "kcpSettings" from the URI's "headerType"/"seed" params (transport
+// type is "kcp" in the link, but "mkcp" in Xray-core's own JSON schema - see the network
+// normalization above). "none" is the header-type default, so it's only set when overridden.
+func getkcp(decoded map[string]string) map[string]any {
+	kcp := map[string]any{}
+	if headerType := decoded["headertype"]; headerType != "" && headerType != "none" {
+		kcp["header"] = map[string]any{"type": headerType}
+	}
+	if seed := decoded["seed"]; seed != "" {
+		kcp["seed"] = seed
+	}
+	// mtu/tti/capacity/buffer sizes: manager-generated xdns/xicmp links intentionally set a small
+	// mtu (tiny DNS-sized UDP payloads don't need a full-size KCP frame), so these need to actually
+	// reach xray-core's kcpSettings instead of being silently dropped - xray/outbound.go's
+	// clampKcpMtu then adapts anything outside xray-core's own hard-enforced 576-1460 range rather
+	// than letting the build fail.
+	if mtu := toIntN(decoded["mtu"]); mtu != nil {
+		kcp["mtu"] = *mtu
+	}
+	if tti := toIntN(decoded["tti"]); tti != nil {
+		kcp["tti"] = *tti
+	}
+	if v := toIntN(decoded["uplinkcapacity"]); v != nil {
+		kcp["uplinkCapacity"] = *v
+	}
+	if v := toIntN(decoded["downlinkcapacity"]); v != nil {
+		kcp["downlinkCapacity"] = *v
+	}
+	if congestion, ok := decoded["congestion"]; ok {
+		kcp["congestion"] = toBool(congestion, false)
+	}
+	if v := toIntN(decoded["readbuffersize"]); v != nil {
+		kcp["readBufferSize"] = *v
+	}
+	if v := toIntN(decoded["writebuffersize"]); v != nil {
+		kcp["writeBufferSize"] = *v
+	}
+	return kcp
+}
+
+// getFinalmask parses the "fm" URI param - a URL-encoded JSON object shaped
+// {"udp":[{"type":"...","settings":{...}}, ...]} - and returns the "udp" array. The caller wraps
+// this back under a top-level "finalmask" key ({"finalmask":{"udp":[...]}}), which is what
+// Xray-core's infra/conf.StreamConfig actually declares - confirmed directly against
+// infra/conf/transport_internet.go's struct tags: `FinalMask *FinalMask `json:"finalmask"“ where
+// `FinalMask.Udp []Mask `json:"udp"“. There is no top-level "udpmasks" field anywhere in
+// Xray-core's JSON-config-file schema (that name only exists as an unrelated internal Go field
+// on the runtime protobuf-ish internet.StreamConfig type StreamConfig.Build() produces - not
+// something JSON ever gets unmarshaled into). A prior version of this function returned "udpmasks"
+// directly instead of re-wrapping under "finalmask", based on conflating those two unrelated
+// fields; json.Unmarshal into infra/conf.StreamConfig silently ignores unrecognized keys, so that
+// mistake still built and started an instance without any error - just one running plain unmasked
+// KCP, with the mask dropped. See hiddify-sing-box's
+// TestFinalmaskKeyReachesXrayCoreStreamConfig for a direct proof of which key actually works.
+//
+// A malformed "fm" still fails the conversion rather than being dropped silently - "fm" being
+// present at all means the link specifically requires that mask (that's the whole point of an
+// xdns/xicmp link), so silently producing a plain, unmasked outbound instead would look like it
+// imported fine and then just not behave as intended, with no indication why.
+func getFinalmask(decoded map[string]string) ([]any, error) {
+	fm := decoded["fm"]
+	if fm == "" {
+		return nil, nil
+	}
+	var parsed struct {
+		UDP []any `json:"udp"`
+	}
+	if err := json.Unmarshal([]byte(fm), &parsed); err != nil {
+		return nil, E.New("invalid fm (finalmask) param: " + err.Error())
+	}
+	return parsed.UDP, nil
 }
 
 // func getXrayFragmentOptions(decoded map[string]string) *conf.Fragment {

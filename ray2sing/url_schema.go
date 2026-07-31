@@ -52,8 +52,12 @@ func ParseUrl(inputURL string, defaultPort uint16) (*UrlSchema, error) {
 
 		// fmt.Print(userInfo)
 		if err == nil && isValidChar(userInfo) {
-			// If decoding is successful, use the decoded string
-			userDetails := strings.Split(userInfo, ":")
+			// If decoding is successful, use the decoded string. Split on only the first colon -
+			// the password itself can legitimately contain further colons (e.g. Shadowsocks-2022's
+			// Extensible Identity Header "iPSK:uPSK" multi-user password chain), and splitting on
+			// every colon would silently fail this whole branch (len != 2) for exactly those
+			// passwords, leaving Username/Password as the raw undecoded base64 blob instead.
+			userDetails := strings.SplitN(userInfo, ":", 2)
 			if len(userDetails) == 2 {
 				data.Username = userDetails[0]
 				data.Password = userDetails[1]

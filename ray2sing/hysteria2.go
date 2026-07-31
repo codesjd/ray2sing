@@ -41,6 +41,7 @@ func Hysteria2Singbox(hysteria2Url string) (*T.Outbound, error) {
 	if u.Password != "" {
 		pass += ":" + u.Password
 	}
+	insecureFallback, pinnedCertSha256 := resolvePinnedCertOrInsecure(decoded)
 	result := T.Outbound{
 		Type: "hysteria2",
 		Tag:  u.Name,
@@ -50,11 +51,12 @@ func Hysteria2Singbox(hysteria2Url string) (*T.Outbound, error) {
 			Password:      pass,
 			OutboundTLSOptionsContainer: T.OutboundTLSOptionsContainer{
 				TLS: &T.OutboundTLSOptions{
-					Enabled:    true,
-					Insecure:   decoded["insecure"] == "1",
-					DisableSNI: isIPOnly(SNI),
-					ServerName: SNI,
-					ECH:        ECHOpts,
+					Enabled:                     true,
+					Insecure:                    insecureFallback,
+					PinnedPeerCertificateSha256: pinnedCertSha256,
+					DisableSNI:                  isIPOnly(SNI),
+					ServerName:                  SNI,
+					ECH:                         ECHOpts,
 				},
 			},
 			// TurnRelay: turnRelay,

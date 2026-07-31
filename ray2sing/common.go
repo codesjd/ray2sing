@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 
 	"strings"
@@ -52,16 +53,14 @@ func getTLSOptions(decoded map[string]string) T.OutboundTLSOptionsContainer {
 	if fp == "" && decoded["security"] == "reality" {
 		fp = "chrome"
 	}
-	insecure, err := getOneOf(decoded, "insecure", "allowinsecure")
-	if err != nil {
-		insecure = "false"
-	}
+	insecureFallback, pinnedCertSha256 := resolvePinnedCertOrInsecure(decoded)
 	tlsOptions := &option.OutboundTLSOptions{
-		Enabled:    true,
-		ServerName: serverName,
-		Insecure:   insecure == "true" || insecure == "1",
-		DisableSNI: getOneOfN(decoded, "", "nosni") != "",
-		ECH:        ECHOpts,
+		Enabled:                     true,
+		ServerName:                  serverName,
+		Insecure:                    insecureFallback,
+		PinnedPeerCertificateSha256: pinnedCertSha256,
+		DisableSNI:                  getOneOfN(decoded, "", "nosni") != "",
+		ECH:                         ECHOpts,
 		// TLSTricks:  getTricksOptions(decoded),
 	}
 	if fp != "" && !tlsOptions.DisableSNI {
@@ -80,7 +79,7 @@ func getTLSOptions(decoded map[string]string) T.OutboundTLSOptionsContainer {
 			tlsOptions.ALPN = []string{"h2", "http/1.1"}
 		} else {
 			tlsOptions.ALPN = strings.Split(alpn, ",")
-			if getALPNversion(tlsOptions.ALPN) == 3 && getOneOfN(decoded, "", "type") == "xhttp" || getOneOfN(decoded, "", "net") == "xhttp" {
+			if getALPNversion(tlsOptions.ALPN) == 3 && (getOneOfN(decoded, "", "type") == "xhttp" || getOneOfN(decoded, "", "net") == "xhttp") {
 				tlsOptions.UTLS = nil //TODO utls quic has bug
 			}
 		}
@@ -525,4 +524,79 @@ func getOneOfN(dic map[string]string, defaultval string, headers ...string) stri
 		}
 	}
 	return defaultval
+}
+
+// cleanKey collapses casing and separator differences ("allowInsecure", "allow_insecure",
+// "allow-insecure", "allow insecure" all become "allowinsecure") so the same lookup works whether
+// the source map came through ParseUrl's normalizeStr (query links) or a raw JSON payload (vmess),
+// which preserve keys verbatim.
+func cleanKey(s string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(s))
+}
+
+// getAny looks up decoded for any of the given keys, ignoring case/separator differences (see cleanKey).
+func getAny(decoded map[string]string, keys ...string) (string, bool) {
+	wanted := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		wanted[cleanKey(k)] = true
+	}
+	for k, v := range decoded {
+		if wanted[cleanKey(k)] {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// isHexSha256 reports whether s is a well-formed lowercase-or-not hex SHA-256 digest (64 hex
+// chars), matching hutils/network/net.py's hashlib.sha256(der_cert).hexdigest() output.
+func isHexSha256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolvePinnedCertOrInsecure implements the manager's TLS-validation fallback: prefer the pinned
+// full-certificate SHA-256 ("pcs"/"pinned_cert_sha256", a lowercase hex digest of the leaf cert's
+// DER bytes - see hutils/network/net.py) over the legacy blanket allowInsecure/insecure flag, which
+// the manager only still emits when no pin is cached yet. The two are mutually exclusive server-side.
+//
+// pcs may carry multiple hashes separated by "~" (xray-core's own multi-pin format, see
+// infra/conf/transport_internet.go's PinnedPeerCertSha256 parsing) even though the manager only
+// ever emits one today. Malformed entries are logged and dropped rather than passed through to
+// fail confusingly at the TLS layer; if every entry turns out malformed, this deliberately does
+// NOT fall back to insecure (that would silently trade a broken pin for no verification at all) -
+// it returns an empty pin list, so the connection fails closed under normal certificate
+// validation instead.
+func resolvePinnedCertOrInsecure(decoded map[string]string) (insecure bool, pinnedCertSha256 []string) {
+	if pcs, ok := getAny(decoded, "pcs", "pinned_cert_sha256"); ok {
+		if pcs = strings.TrimSpace(pcs); pcs != "" {
+			var pins []string
+			for _, hash := range strings.Split(pcs, "~") {
+				hash = strings.ToLower(strings.TrimSpace(hash))
+				if hash == "" {
+					continue
+				}
+				if !isHexSha256(hash) {
+					fmt.Fprintf(os.Stderr, "ray2sing: ignoring malformed pcs entry (want 64 hex chars): %q\n", hash)
+					continue
+				}
+				pins = append(pins, hash)
+			}
+			if len(pins) > 0 {
+				return false, pins
+			}
+		}
+	}
+	if v, ok := getAny(decoded, "insecure", "allow_insecure"); ok {
+		v = strings.ToLower(strings.TrimSpace(v))
+		return v == "1" || v == "true", nil
+	}
+	return false, nil
 }

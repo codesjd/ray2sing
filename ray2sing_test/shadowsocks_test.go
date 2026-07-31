@@ -28,7 +28,6 @@ func TestShadowsocks(t *testing.T) {
 	ray2sing.CheckUrlAndJson(url, expectedJSON, t)
 }
 
-
 func TestShadowsocksEIHBase64(t *testing.T) {
 	// EIH extension: https://github.com/Shadowsocks-NET/shadowsocks-specs/blob/main/2022-2-shadowsocks-2022-extensible-identity-headers.md
 	// Named as "multi-user" in https://sing-box.sagernet.org/configuration/inbound/shadowsocks/#structure
@@ -54,7 +53,6 @@ func TestShadowsocksEIHBase64(t *testing.T) {
 	ray2sing.CheckUrlAndJson(url, expectedJSON, t)
 }
 
-
 func TestShadowsocksEIHPlain(t *testing.T) {
 	// EIH extension: https://github.com/Shadowsocks-NET/shadowsocks-specs/blob/main/2022-2-shadowsocks-2022-extensible-identity-headers.md
 	// Named as "multi-user" in https://sing-box.sagernet.org/configuration/inbound/shadowsocks/#structure
@@ -77,4 +75,16 @@ func TestShadowsocksEIHPlain(t *testing.T) {
 	`
 
 	ray2sing.CheckUrlAndJson(url, expectedJSON, t)
+}
+
+func TestShadowsocksMissingPasswordReturnsError(t *testing.T) {
+	// No colon anywhere recoverable from the userinfo: not valid base64
+	// (contains "-"), and even if it were, has nothing to split on. This
+	// must not silently produce a "method: none" outbound.
+	url := "ss://not-valid-base64-and-no-colon@5.35.34.107:55990#test"
+
+	_, err := ray2sing.ShadowsocksSingbox(url)
+	if err == nil {
+		t.Fatalf("expected an error for a shadowsocks link with no recoverable password, got nil")
+	}
 }
